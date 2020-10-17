@@ -27,11 +27,11 @@ class Trainer():
 
     def __weights_init(self, m):
         if isinstance(m, nn.Conv1d):
-            nn.init.xavier_uniform_(m.weight)
+            nn.init.kaiming_normal_(m.weight)
         if isinstance(m, nn.Conv2d):
-            nn.init.xavier_uniform_(m.weight)
+            nn.init.kaiming_normal_(m.weight)
         if isinstance(m, nn.Linear):
-            nn.init.xavier_uniform_(m.weight)
+            nn.init.kaiming_normal_(m.weight)
 
     def update_epoch(self):
         self.scheduler.step()
