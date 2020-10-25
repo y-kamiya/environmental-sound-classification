@@ -188,7 +188,6 @@ if __name__ == '__main__':
     parser.add_argument('--cross_validation', action='store_true')
     parser.add_argument('--use_adam', action='store_true')
     parser.add_argument('--use_augment', action='store_true')
-    parser.add_argument('--normalized', action='store_true')
     parser.add_argument('--augment_mel_width_max', type=int, default=22)
     parser.add_argument('--augment_time_width_max', type=int, default=30)
     parser.add_argument('--n_class', type=int, default=50)

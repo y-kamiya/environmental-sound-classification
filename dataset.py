@@ -127,8 +127,7 @@ class LogmelDataset(BaseDataset):
 
     def __getitem__(self, index):
         data = self.data[index]
-        if self.config.normalized:
-            data = self.transforms_norm(data)
+        data = self.transforms_norm(data)
 
         data = self.__augment(data)
         label = self.segment_labels[index]
@@ -188,7 +187,7 @@ class EnvNetDataset(BaseDataset):
                 break
 
         if i == max_iter - 1:
-            self.config.logger.warning("valid section is not found: {}".format(path))
+            self.config.logger.warning("valid section is not found: index {}".format(index))
 
         return data.unsqueeze(0), self.labels[index], index
 
