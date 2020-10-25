@@ -9,6 +9,7 @@ import random
 class BaseDataset(Dataset):
     def __init__(self, config, csv_path, audio_dir, folderList):
         super(BaseDataset, self).__init__()
+        torchaudio.set_audio_backend('sox_io')
         self.config = config
 
         csvData = pd.read_csv(csv_path)
@@ -45,7 +46,6 @@ class LogmelDataset(BaseDataset):
             segment_size = frame_size * frame_per_segment
             step_size = segment_size // 2
 
-            torchaudio.set_audio_backend('sox_io')
             transforms_mel = transforms.Compose([
                 torchaudio.transforms.MelSpectrogram(
                     sample_rate=22050, win_length=window_size, n_fft=window_size, hop_length=frame_size, n_mels=60, normalized=True),
@@ -169,7 +169,7 @@ class EnvNetDataset(BaseDataset):
         self.sounds = []
         for i, file in enumerate(self.filenames):
             path = os.path.join(self.audio_dir, file)
-            sound = torchaudio.load(path, out = None, normalization = True)
+            sound = torchaudio.load(path, normalize=True)
             resampled = trans(sound[0].squeeze())
             resampled /= torch.max(torch.abs(resampled))
             self.sounds.append(resampled)
