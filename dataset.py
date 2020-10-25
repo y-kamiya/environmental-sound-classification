@@ -170,11 +170,11 @@ class EnvNetDataset(BaseDataset):
             path = os.path.join(self.audio_dir, file)
             sound = torchaudio.load(path, normalize=True)
             resampled = trans(sound[0].squeeze())
-            resampled /= torch.max(torch.abs(resampled))
             self.sounds.append(resampled)
 
     def is_enough_amplitude(self, data):
-        return 0.2 < torch.max(torch.abs(data))
+        return True
+        # return 0.2 < torch.max(torch.abs(data))
 
     def __getitem__(self, index):
         resampled = self.sounds[index]
