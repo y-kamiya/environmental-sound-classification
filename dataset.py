@@ -1,10 +1,12 @@
 import torch
 import torchaudio
+import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.utils.data import Dataset
 import pandas as pd
 import os
 import random
+import math
 
 class BaseDataset(Dataset):
     def __init__(self, config, csv_path, audio_dir, folderList):
@@ -157,45 +159,58 @@ class WaveDataset(BaseDataset):
         return soundFormatted, self.labels[index], index
 
 class EnvNetDataset(BaseDataset):
+    SAMPLING_RATE = 16000
+    INPUT_SEC = 1.5
+
     def __init__(self, config, csv_path, audio_dir, folderList):
         super(EnvNetDataset, self).__init__(config, csv_path, audio_dir, folderList)
 
+        n_padding = int(self.SAMPLING_RATE * self.INPUT_SEC / 2)
+
         trans = transforms.Compose([
-            torchaudio.transforms.Resample(44100, 16000)
+            torchaudio.transforms.Resample(44100, self.SAMPLING_RATE)
         ])
-        self.segment_size = int(16000 * 1.5)
+        self.segment_size = int(self.SAMPLING_RATE * self.INPUT_SEC)
 
         self.sounds = []
         for i, file in enumerate(self.filenames):
+            if i > 30:
+                break
             path = os.path.join(self.audio_dir, file)
             sound = torchaudio.load(path, normalize=True)
             resampled = trans(sound[0].squeeze())
-            self.sounds.append(resampled)
+            sound = F.pad(resampled, (n_padding, n_padding), 'constant', 0)
+            self.sounds.append(sound)
+
+    def __len__(self):
+        return 30
 
     def is_enough_amplitude(self, data):
         return True
         # return 0.2 < torch.max(torch.abs(data))
 
-    def __getitem__(self, index):
-        resampled = self.sounds[index]
-
+    def random_crop(self, sound):
         max_iter = 10000
         for i in range(max_iter):
-            start = random.randint(0, len(resampled) - self.segment_size)
-            data = resampled[start : start + self.segment_size]
+            start = random.randint(0, len(sound) - self.segment_size)
+            data = sound[start : start + self.segment_size]
             if self.is_enough_amplitude(data):
                 break
 
         if i == max_iter - 1:
             self.config.logger.warning("valid section is not found: index {}".format(index))
 
+        return data
+
+    def __getitem__(self, index):
+        data = self.random_crop(self.sounds[index])
         return data.unsqueeze(0), self.labels[index], index
 
 class EnvNetEvalDataset(EnvNetDataset):
     def __init__(self, config, csv_path, audio_dir, folderList):
         super(EnvNetEvalDataset, self).__init__(config, csv_path, audio_dir, folderList)
 
-        step_size = int(16000 * 0.2)
+        step_size = self.step_size(self.sounds[0])
         self.sounds_segmented = []
         self.labels_segmented = []
         self.file_ids = []
@@ -212,9 +227,62 @@ class EnvNetEvalDataset(EnvNetDataset):
                 start += step_size
                 clip = sound[start:(start+self.segment_size)]
 
+    def step_size(self):
+        return int(self.SAMPLING_RATE * 0.2)
+
     def __getitem__(self, index):
         return self.sounds_segmented[index], self.labels_segmented[index], self.file_ids[index]
 
     def __len__(self):
         return len(self.sounds_segmented)
+
+class BcLearningDataset(EnvNetDataset):
+    def __init__(self, config, csv_path, audio_dir, folderList):
+        super(BcLearningDataset, self).__init__(config, csv_path, audio_dir, folderList)
+
+    def __getitem__(self, index):
+        while (True):
+            rand1 = random.randint(0, len(self.sounds)) - 1
+            rand2 = random.randint(0, len(self.sounds)) - 1
+            label1 = self.labels[rand1]
+            label2 = self.labels[rand2]
+            if label1 != label2:
+                sound1 = self.random_crop(self.sounds[rand1])
+                sound2 = self.random_crop(self.sounds[rand2])
+                break
+
+        G1 = self.__compute_gain_max(sound1)
+        G2 = self.__compute_gain_max(sound2)
+
+        r = random.random()
+        p = 1 / (1 + 10 ** (G1 - G2) / 20 * (1 - r) / r)
+        sound = (p * sound1 + (1 - p) * sound2) / ((p ** 2 + (1 - p) ** 2) ** 0.5)
+
+        target = torch.zeros(self.config.n_class)
+        target[label1] = r
+        target[label2] = 1 - r
+
+        return sound.unsqueeze(0), target, index
+    
+    def __compute_gain_max(self, x, n_fft=2048, min_db=-80):
+       stride = n_fft // 2
+       gains = torch.empty(0)
+       for start in range(0, len(x) - n_fft + 1, stride):
+           end = start + n_fft
+           gains = torch.cat((gains, torch.mean(x[start:end] ** 2).unsqueeze(0)))
+
+       gain_max = max(torch.max(gains).item(), 10 ** (min_db / 10))
+       return 10 * math.log10(gain_max)
+
+
+class BcLearningEvalDataset(EnvNetEvalDataset):
+    N_CROPS = 10
+
+    def __init__(self, config, csv_path, audio_dir, folderList):
+        super(BcLearningEvalDataset, self).__init__(config, csv_path, audio_dir, folderList)
+
+    def step_size(self, sound):
+        return (len(sound) - self.segment_size) // (self.N_CROPS - 1)
+
+
 
