@@ -62,7 +62,7 @@ class Trainer():
 
     def __loss(self, output, target):
         if self.config.model_type == 'bc-learning':
-            return F.kl_div(F.log_softmax(output), target)
+            return F.kl_div(F.log_softmax(output), target, reduction='batchmean')
 
         if self.config.model_type == 'envnet':
             return F.cross_entropy(F.log_softmax(output), target)
