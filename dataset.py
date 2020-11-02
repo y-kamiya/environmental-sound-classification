@@ -174,16 +174,16 @@ class EnvNetDataset(BaseDataset):
 
         self.sounds = []
         for i, file in enumerate(self.filenames):
-            if i > 30:
-                break
+            # if i > 30:
+            #     break
             path = os.path.join(self.audio_dir, file)
             sound = torchaudio.load(path, normalize=True)
             resampled = trans(sound[0].squeeze())
             sound = F.pad(resampled, (n_padding, n_padding), 'constant', 0)
             self.sounds.append(sound)
 
-    def __len__(self):
-        return 30
+    # def __len__(self):
+    #     return 30
 
     def is_enough_amplitude(self, data):
         return True
