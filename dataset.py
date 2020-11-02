@@ -35,12 +35,20 @@ class BaseDataset(Dataset):
     def __len__(self):
         return len(self.filenames)
 
+    def data_filename(self, folderList):
+        class_name = self.__class__.__name__
+        folder_str = ''.join([str(n) for n in folderList])
+        if self.config.segmented:
+            return '{}{}.segmented.pth'.format(class_name, folder_str)
+        return '{}{}.pth'.format(class_name, folder_str)
+
+
 class LogmelDataset(BaseDataset):
     def __init__(self, config, csv_path, audio_dir, folderList, apply_augment=True):
         super(LogmelDataset, self).__init__(config, csv_path, audio_dir, folderList)
         self.apply_augment = apply_augment
 
-        data_cache_path = os.path.join(self.config.dataroot, self.__data_filename(folderList))
+        data_cache_path = os.path.join(self.config.dataroot, self.data_filename(folderList))
         if not os.path.exists(data_cache_path):
             frame_size = 512
             window_size = 1024
@@ -96,12 +104,6 @@ class LogmelDataset(BaseDataset):
         self.transforms_norm = transforms.Compose([
             transforms.Normalize(mean, std),
         ])
-
-    def __data_filename(self, folderList):
-        folder_str = ''.join([str(n) for n in folderList])
-        if self.config.segmented:
-            return 'data{}.segmented.pth'.format(folder_str)
-        return 'data{}.pth'.format(folder_str)
 
     def __create_data(self, index, wave, transforms):
         mel = transforms(wave)
@@ -167,20 +169,31 @@ class EnvNetDataset(BaseDataset):
 
         n_padding = int(self.SAMPLING_RATE * self.INPUT_SEC / 2)
 
-        trans = transforms.Compose([
-            torchaudio.transforms.Resample(44100, self.SAMPLING_RATE)
-        ])
         self.segment_size = int(self.SAMPLING_RATE * self.INPUT_SEC)
 
-        self.sounds = []
-        for i, file in enumerate(self.filenames):
-            # if i > 30:
-            #     break
-            path = os.path.join(self.audio_dir, file)
-            sound = torchaudio.load(path, normalize=True)
-            resampled = trans(sound[0].squeeze())
-            sound = F.pad(resampled, (n_padding, n_padding), 'constant', 0)
-            self.sounds.append(sound)
+        data_cache_path = os.path.join(self.config.dataroot, self.data_filename(folderList))
+        if not os.path.exists(data_cache_path):
+            trans = transforms.Compose([
+                torchaudio.transforms.Resample(44100, self.SAMPLING_RATE)
+            ])
+            self.sounds = []
+
+            for i, file in enumerate(self.filenames):
+                # if i > 30:
+                #     break
+                path = os.path.join(self.audio_dir, file)
+                sound = torchaudio.load(path, normalize=True)
+                resampled = trans(sound[0].squeeze())
+                sound = F.pad(resampled, (n_padding, n_padding), 'constant', 0)
+                self.sounds.append(sound)
+
+            torch.save({
+                'sounds': self.sounds,
+            }, data_cache_path)
+
+        loaded = torch.load(data_cache_path, map_location=torch.device(self.config.device_name))
+        self.sounds = loaded['sounds']
+
 
     # def __len__(self):
     #     return 30
