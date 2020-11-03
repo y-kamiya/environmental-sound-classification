@@ -240,7 +240,7 @@ class EnvNetEvalDataset(EnvNetDataset):
                 start += step_size
                 clip = sound[start:(start+self.segment_size)]
 
-    def step_size(self):
+    def step_size(self, _):
         return int(self.SAMPLING_RATE * 0.2)
 
     def __getitem__(self, index):
