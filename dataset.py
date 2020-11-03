@@ -191,7 +191,7 @@ class EnvNetDataset(BaseDataset):
                 'sounds': self.sounds,
             }, data_cache_path)
 
-        loaded = torch.load(data_cache_path, map_location=torch.device(self.config.device_name))
+        loaded = torch.load(data_cache_path, map_location=torch.device('cpu'))
         self.sounds = loaded['sounds']
 
 
