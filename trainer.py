@@ -96,11 +96,15 @@ class Trainer():
         return optim.Adam(model.parameters(), lr=self.config.lr, weight_decay=0.0001)
 
     def __create_scheduler(self, optimizer):
+        milestones = self.config.lr_milestones
+        print(milestones)
         if self.config.model_type in ['bc-learning']:
-            return optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 225], gamma=0.1)
+            milestones = [600, 900] if milestones is None else milestones
+            return optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.1)
 
         if self.config.model_type in ['envnet']:
-            return optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 100, 120], gamma=0.1)
+            milestones = [80, 100, 120] if milestones is None else milestones
+            return optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.1)
 
         if self.config.model_type == 'escconv':
             return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda _: 1.0)
@@ -193,6 +197,7 @@ if __name__ == '__main__':
     parser.add_argument('--augment_time_width_max', type=int, default=30)
     parser.add_argument('--n_class', type=int, default=50)
     parser.add_argument('--batchnorm', action='store_true')
+    parser.add_argument('--lr_milestones', type=int, nargs='*', default=None)
     args = parser.parse_args()
 
     logger = setup_logger(name=__name__, level=args.loglevel)
