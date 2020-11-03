@@ -55,7 +55,7 @@ class Trainer():
             n_processed_data = (epoch-1) * len(dataloader.dataset) + (batch_idx+1) * self.config.batch_size
             self.writer.add_scalar('loss/train', loss, n_processed_data, time.time())
 
-            if batch_idx % self.config.log_interval == 0: #print training stats
+            if batch_idx % self.config.log_interval == 0:
                 self.config.logger.info('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                     epoch, batch_idx * self.config.batch_size, len(dataloader.dataset),
                     100. * batch_idx / len(dataloader), loss))
@@ -140,8 +140,8 @@ class Trainer():
 
         self.writer.add_scalar('loss/acc', accuracy, epoch, time.time())
 
-        self.config.logger.info('\nTest set: Accuracy: {}/{} ({:.0f}%)\n'.format(
-            correct, n_data, accuracy))
+        self.config.logger.info('\nTest Epoch: {}\tTest set: Accuracy: {}/{} ({:.0f}%)\n'.format(
+            epoch, correct, n_data, accuracy))
 
         return accuracy
 
