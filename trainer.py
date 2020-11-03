@@ -198,6 +198,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_class', type=int, default=50)
     parser.add_argument('--batchnorm', action='store_true')
     parser.add_argument('--lr_milestones', type=int, nargs='*', default=None)
+    parser.add_argument('--amplitude_threshold', type=float, default=0.2)
     args = parser.parse_args()
 
     logger = setup_logger(name=__name__, level=args.loglevel)

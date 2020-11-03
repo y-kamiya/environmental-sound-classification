@@ -199,8 +199,7 @@ class EnvNetDataset(BaseDataset):
     #     return 30
 
     def is_enough_amplitude(self, data):
-        return True
-        # return 0.2 < torch.max(torch.abs(data))
+        return self.config.amplitude_threshold < torch.max(torch.abs(data))
 
     def random_crop(self, sound):
         max_iter = 10000
