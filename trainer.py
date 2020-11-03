@@ -97,9 +97,8 @@ class Trainer():
 
     def __create_scheduler(self, optimizer):
         milestones = self.config.lr_milestones
-        print(milestones)
         if self.config.model_type in ['bc-learning']:
-            milestones = [600, 900] if milestones is None else milestones
+            milestones = [300, 450] if milestones is None else milestones
             return optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.1)
 
         if self.config.model_type in ['envnet']:

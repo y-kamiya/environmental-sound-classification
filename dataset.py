@@ -253,6 +253,10 @@ class BcLearningDataset(EnvNetDataset):
         super(BcLearningDataset, self).__init__(config, csv_path, audio_dir, folderList)
 
     def __getitem__(self, index):
+        if not self.config.use_augment:
+            sound = self.sounds[index]
+            return self.random_crop(sound), self.labels[index], index
+
         while (True):
             rand1 = random.randint(0, len(self.sounds)) - 1
             rand2 = random.randint(0, len(self.sounds)) - 1
