@@ -201,7 +201,8 @@ class EnvNetDataset(BaseDataset):
     def is_enough_amplitude(self, data):
         return self.config.amplitude_threshold < torch.max(torch.abs(data))
 
-    def random_crop(self, sound):
+    def random_crop(self, index):
+        sound = self.sounds[index]
         max_iter = 10000
         for i in range(max_iter):
             start = random.randint(0, len(sound) - self.segment_size)
@@ -215,7 +216,7 @@ class EnvNetDataset(BaseDataset):
         return data
 
     def __getitem__(self, index):
-        data = self.random_crop(self.sounds[index])
+        data = self.random_crop(index)
         return data.unsqueeze(0), self.labels[index], index
 
 class EnvNetEvalDataset(EnvNetDataset):
@@ -254,8 +255,9 @@ class BcLearningDataset(EnvNetDataset):
 
     def __getitem__(self, index):
         if not self.config.use_augment:
-            sound = self.sounds[index]
-            return self.random_crop(sound), self.labels[index], index
+            target = torch.zeros(self.config.n_class)
+            target[self.labels[index]] = 1.0
+            return self.random_crop(index).unsqueeze(0), target, index
 
         while (True):
             rand1 = random.randint(0, len(self.sounds)) - 1
@@ -263,8 +265,8 @@ class BcLearningDataset(EnvNetDataset):
             label1 = self.labels[rand1]
             label2 = self.labels[rand2]
             if label1 != label2:
-                sound1 = self.random_crop(self.sounds[rand1])
-                sound2 = self.random_crop(self.sounds[rand2])
+                sound1 = self.random_crop(rand1)
+                sound2 = self.random_crop(rand2)
                 break
 
         G1 = self.__compute_gain_max(sound1)
