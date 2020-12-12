@@ -200,16 +200,17 @@ if __name__ == '__main__':
     parser.add_argument('--amplitude_threshold', type=float, default=0.2)
     args = parser.parse_args()
 
-    logger = setup_logger(name=__name__, level=args.loglevel)
-    logger.info(args)
-    args.logger = logger
-
     is_cpu = args.cpu or not torch.cuda.is_available()
     args.device_name = "cpu" if is_cpu else "cuda"
     args.device = torch.device(args.device_name)
 
     args.tensorboard_log_dir = f'{args.dataroot}/runs/{args.name}'
     os.makedirs(args.tensorboard_log_dir, exist_ok=True)
+
+    logger = setup_logger(name=__name__, level=args.loglevel)
+    logger.info(args)
+    args.logger = logger
+
 
     if not args.cross_validation:
         train_folds = [1,2,3,4]
