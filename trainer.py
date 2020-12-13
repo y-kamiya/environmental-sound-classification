@@ -169,13 +169,15 @@ def train(args, train_folds, eval_folds):
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False)
 
-    accuracy = 0.0
     for epoch in range(1, args.epochs + 1):
         trainer.train(train_loader, epoch)
-        accuracy = trainer.eval(eval_loader, epoch)
+        if epoch % args.eval_interval == 0:
+            trainer.eval(eval_loader, epoch)
         trainer.update_epoch()
 
-    return accuracy
+    last_accuracy = trainer.eval(eval_loader, epoch)
+
+    return last_accuracy
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(add_help=True)
@@ -198,6 +200,7 @@ if __name__ == '__main__':
     parser.add_argument('--batchnorm', action='store_true')
     parser.add_argument('--lr_milestones', type=int, nargs='*', default=None)
     parser.add_argument('--amplitude_threshold', type=float, default=0.2)
+    parser.add_argument('--eval_interval', type=int, default=1)
     args = parser.parse_args()
 
     is_cpu = args.cpu or not torch.cuda.is_available()
