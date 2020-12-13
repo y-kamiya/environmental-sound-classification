@@ -125,7 +125,7 @@ class Trainer():
         for data, target, file_ids in dataloader:
             data = data.to(device)
             target = target.to(device)
-            output = self.model(data)
+            output = F.softmax(self.model(data))
 
             for i, entry in enumerate(output):
                 file_id = file_ids[i]
