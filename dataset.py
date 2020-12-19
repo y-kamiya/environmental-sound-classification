@@ -1,14 +1,17 @@
 import torch
 import torchaudio
+import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.utils.data import Dataset
 import pandas as pd
 import os
 import random
+import math
 
 class BaseDataset(Dataset):
     def __init__(self, config, csv_path, audio_dir, folderList):
         super(BaseDataset, self).__init__()
+        torchaudio.set_audio_backend('sox_io')
         self.config = config
 
         csvData = pd.read_csv(csv_path)
@@ -32,12 +35,20 @@ class BaseDataset(Dataset):
     def __len__(self):
         return len(self.filenames)
 
+    def data_filename(self, folderList):
+        class_name = self.__class__.__name__
+        folder_str = ''.join([str(n) for n in folderList])
+        if self.config.segmented:
+            return '{}{}.segmented.pth'.format(class_name, folder_str)
+        return '{}{}.pth'.format(class_name, folder_str)
+
+
 class LogmelDataset(BaseDataset):
     def __init__(self, config, csv_path, audio_dir, folderList, apply_augment=True):
         super(LogmelDataset, self).__init__(config, csv_path, audio_dir, folderList)
         self.apply_augment = apply_augment
 
-        data_cache_path = os.path.join(self.config.dataroot, self.__data_filename(folderList))
+        data_cache_path = os.path.join(self.config.dataroot, self.data_filename(folderList))
         if not os.path.exists(data_cache_path):
             frame_size = 512
             window_size = 1024
@@ -45,7 +56,6 @@ class LogmelDataset(BaseDataset):
             segment_size = frame_size * frame_per_segment
             step_size = segment_size // 2
 
-            torchaudio.set_audio_backend('sox_io')
             transforms_mel = transforms.Compose([
                 torchaudio.transforms.MelSpectrogram(
                     sample_rate=22050, win_length=window_size, n_fft=window_size, hop_length=frame_size, n_mels=60, normalized=True),
@@ -95,12 +105,6 @@ class LogmelDataset(BaseDataset):
             transforms.Normalize(mean, std),
         ])
 
-    def __data_filename(self, folderList):
-        folder_str = ''.join([str(n) for n in folderList])
-        if self.config.segmented:
-            return 'data{}.segmented.pth'.format(folder_str)
-        return 'data{}.pth'.format(folder_str)
-
     def __create_data(self, index, wave, transforms):
         mel = transforms(wave)
         if torch.mean(mel) < -70.0:
@@ -127,8 +131,7 @@ class LogmelDataset(BaseDataset):
 
     def __getitem__(self, index):
         data = self.data[index]
-        if self.config.normalized:
-            data = self.transforms_norm(data)
+        data = self.transforms_norm(data)
 
         data = self.__augment(data)
         label = self.segment_labels[index]
@@ -158,45 +161,69 @@ class WaveDataset(BaseDataset):
         return soundFormatted, self.labels[index], index
 
 class EnvNetDataset(BaseDataset):
+    SAMPLING_RATE = 16000
+    INPUT_SEC = 1.5
+
     def __init__(self, config, csv_path, audio_dir, folderList):
         super(EnvNetDataset, self).__init__(config, csv_path, audio_dir, folderList)
 
-        trans = transforms.Compose([
-            torchaudio.transforms.Resample(44100, 16000)
-        ])
-        self.segment_size = int(16000 * 1.5)
+        n_padding = int(self.SAMPLING_RATE * self.INPUT_SEC / 2)
 
-        self.sounds = []
-        for i, file in enumerate(self.filenames):
-            path = os.path.join(self.audio_dir, file)
-            sound = torchaudio.load(path, out = None, normalization = True)
-            resampled = trans(sound[0].squeeze())
-            resampled /= torch.max(torch.abs(resampled))
-            self.sounds.append(resampled)
+        self.segment_size = int(self.SAMPLING_RATE * self.INPUT_SEC)
+
+        data_cache_path = os.path.join(self.config.dataroot, self.data_filename(folderList))
+        if not os.path.exists(data_cache_path):
+            trans = transforms.Compose([
+                torchaudio.transforms.Resample(44100, self.SAMPLING_RATE)
+            ])
+            self.sounds = []
+
+            for i, file in enumerate(self.filenames):
+                # if i > 30:
+                #     break
+                path = os.path.join(self.audio_dir, file)
+                sound = torchaudio.load(path, normalize=True)
+                resampled = trans(sound[0].squeeze())
+                sound = F.pad(resampled, (n_padding, n_padding), 'constant', 0)
+                self.sounds.append(sound)
+
+            torch.save({
+                'sounds': self.sounds,
+            }, data_cache_path)
+
+        loaded = torch.load(data_cache_path, map_location=torch.device('cpu'))
+        self.sounds = loaded['sounds']
+
+
+    # def __len__(self):
+    #     return 30
 
     def is_enough_amplitude(self, data):
-        return 0.2 < torch.max(torch.abs(data))
+        return self.config.amplitude_threshold < torch.max(torch.abs(data))
 
-    def __getitem__(self, index):
-        resampled = self.sounds[index]
-
+    def random_crop(self, index):
+        sound = self.sounds[index]
         max_iter = 10000
         for i in range(max_iter):
-            start = random.randint(0, len(resampled) - self.segment_size)
-            data = resampled[start : start + self.segment_size]
+            start = random.randint(0, len(sound) - self.segment_size)
+            data = sound[start : start + self.segment_size]
             if self.is_enough_amplitude(data):
                 break
 
         if i == max_iter - 1:
-            self.config.logger.warning("valid section is not found: {}".format(path))
+            self.config.logger.warning("valid section is not found: index {}".format(index))
 
+        return data
+
+    def __getitem__(self, index):
+        data = self.random_crop(index)
         return data.unsqueeze(0), self.labels[index], index
 
 class EnvNetEvalDataset(EnvNetDataset):
     def __init__(self, config, csv_path, audio_dir, folderList):
         super(EnvNetEvalDataset, self).__init__(config, csv_path, audio_dir, folderList)
 
-        step_size = int(16000 * 0.2)
+        step_size = self.step_size(self.sounds[0])
         self.sounds_segmented = []
         self.labels_segmented = []
         self.file_ids = []
@@ -213,9 +240,67 @@ class EnvNetEvalDataset(EnvNetDataset):
                 start += step_size
                 clip = sound[start:(start+self.segment_size)]
 
+    def step_size(self, _):
+        return int(self.SAMPLING_RATE * 0.2)
+
     def __getitem__(self, index):
         return self.sounds_segmented[index], self.labels_segmented[index], self.file_ids[index]
 
     def __len__(self):
         return len(self.sounds_segmented)
+
+class BcLearningDataset(EnvNetDataset):
+    def __init__(self, config, csv_path, audio_dir, folderList):
+        super(BcLearningDataset, self).__init__(config, csv_path, audio_dir, folderList)
+
+    def __getitem__(self, index):
+        if not self.config.use_augment:
+            target = torch.zeros(self.config.n_class)
+            target[self.labels[index]] = 1.0
+            return self.random_crop(index).unsqueeze(0), target, index
+
+        while (True):
+            rand1 = random.randint(0, len(self.sounds)) - 1
+            rand2 = random.randint(0, len(self.sounds)) - 1
+            label1 = self.labels[rand1]
+            label2 = self.labels[rand2]
+            if label1 != label2:
+                sound1 = self.random_crop(rand1)
+                sound2 = self.random_crop(rand2)
+                break
+
+        G1 = self.__compute_gain_max(sound1)
+        G2 = self.__compute_gain_max(sound2)
+
+        r = random.random()
+        p = 1 / (1 + 10 ** (G1 - G2) / 20 * (1 - r) / r)
+        sound = (p * sound1 + (1 - p) * sound2) / ((p ** 2 + (1 - p) ** 2) ** 0.5)
+
+        target = torch.zeros(self.config.n_class)
+        target[label1] = r
+        target[label2] = 1 - r
+
+        return sound.unsqueeze(0), target, index
+    
+    def __compute_gain_max(self, x, n_fft=2048, min_db=-80):
+       stride = n_fft // 2
+       gains = torch.empty(0)
+       for start in range(0, len(x) - n_fft + 1, stride):
+           end = start + n_fft
+           gains = torch.cat((gains, torch.mean(x[start:end] ** 2).unsqueeze(0)))
+
+       gain_max = max(torch.max(gains).item(), 10 ** (min_db / 10))
+       return 10 * math.log10(gain_max)
+
+
+class BcLearningEvalDataset(EnvNetEvalDataset):
+    N_CROPS = 10
+
+    def __init__(self, config, csv_path, audio_dir, folderList):
+        super(BcLearningEvalDataset, self).__init__(config, csv_path, audio_dir, folderList)
+
+    def step_size(self, sound):
+        return (len(sound) - self.segment_size) // (self.N_CROPS - 1)
+
+
 

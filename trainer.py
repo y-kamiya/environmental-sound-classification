@@ -55,20 +55,23 @@ class Trainer():
             n_processed_data = (epoch-1) * len(dataloader.dataset) + (batch_idx+1) * self.config.batch_size
             self.writer.add_scalar('loss/train', loss, n_processed_data, time.time())
 
-            if batch_idx % self.config.log_interval == 0: #print training stats
+            if batch_idx % self.config.log_interval == 0:
                 self.config.logger.info('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                     epoch, batch_idx * self.config.batch_size, len(dataloader.dataset),
                     100. * batch_idx / len(dataloader), loss))
 
     def __loss(self, output, target):
+        if self.config.model_type == 'bc-learning':
+            return F.kl_div(F.log_softmax(output), target, reduction='batchmean')
+
         if self.config.model_type == 'envnet':
-            return F.cross_entropy(output, target)
+            return F.cross_entropy(F.log_softmax(output), target)
 
         return F.nll_loss(output, target)
 
     def __create_model(self):
         device = self.config.device
-        if self.config.model_type == 'envnet':
+        if self.config.model_type in ['envnet', 'bc-learning']:
             return model.EnvNet(self.config).to(device)
 
         if self.config.model_type == 'escconv':
@@ -77,11 +80,12 @@ class Trainer():
         return model.M5().to(device)
 
     def __create_optimizer(self, model):
-        if self.config.model_type == 'envnet':
+        if self.config.model_type in ['envnet', 'bc-learning']:
             if self.config.use_adam:
-                return optim.Adam(model.parameters(), lr=1.0)
+                return optim.Adam(model.parameters(), lr=0.01)
 
-            return optim.SGD(model.parameters(), momentum=0.9, lr=1.0, weight_decay=0.001, nesterov=True)
+            decay = 0.001 if self.config.model_type == 'envnet' else 0.0005
+            return optim.SGD(model.parameters(), momentum=0.9, lr=0.01, weight_decay=decay, nesterov=True)
 
         if self.config.model_type == 'escconv':
             if self.config.use_adam:
@@ -92,17 +96,14 @@ class Trainer():
         return optim.Adam(model.parameters(), lr=self.config.lr, weight_decay=0.0001)
 
     def __create_scheduler(self, optimizer):
-        if self.config.model_type == 'envnet':
-            def func(epoch):
-                if epoch < 80:
-                    return 1e-2
-                elif epoch < 100:
-                    return 1e-3
-                elif epoch < 120:
-                    return 1e-4
-                else:
-                    return 1e-5
-            return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=func)
+        milestones = self.config.lr_milestones
+        if self.config.model_type in ['bc-learning']:
+            milestones = [300, 450] if milestones is None else milestones
+            return optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.1)
+
+        if self.config.model_type in ['envnet']:
+            milestones = [80, 100, 120] if milestones is None else milestones
+            return optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.1)
 
         if self.config.model_type == 'escconv':
             return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda _: 1.0)
@@ -124,7 +125,7 @@ class Trainer():
         for data, target, file_ids in dataloader:
             data = data.to(device)
             target = target.to(device)
-            output = self.model(data)
+            output = F.softmax(self.model(data))
 
             for i, entry in enumerate(output):
                 file_id = file_ids[i]
@@ -138,8 +139,8 @@ class Trainer():
 
         self.writer.add_scalar('loss/acc', accuracy, epoch, time.time())
 
-        self.config.logger.info('\nTest set: Accuracy: {}/{} ({:.0f}%)\n'.format(
-            correct, n_data, accuracy))
+        self.config.logger.info('\nTest Epoch: {}\tTest set: Accuracy: {}/{} ({:.0f}%)\n'.format(
+            epoch, correct, n_data, accuracy))
 
         return accuracy
 
@@ -158,20 +159,25 @@ def train(args, train_folds, eval_folds):
     elif args.model_type == 'envnet':
         train_dataset = dataset.EnvNetDataset(args, csv_path, audio_dir, train_folds)
         eval_dataset = dataset.EnvNetEvalDataset(args, csv_path, audio_dir, eval_folds)
+    elif args.model_type == 'bc-learning':
+        train_dataset = dataset.BcLearningDataset(args, csv_path, audio_dir, train_folds)
+        eval_dataset = dataset.BcLearningEvalDataset(args, csv_path, audio_dir, eval_folds)
     else:
         train_dataset = dataset.WaveDataset(args, csv_path, audio_dir, train_folds)
         eval_dataset = dataset.WaveDataset(args, csv_path, audio_dir, eval_folds)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    eval_loader = DataLoader(eval_dataset, batch_size=1, shuffle=False)
+    eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False)
 
-    accuracy = 0.0
     for epoch in range(1, args.epochs + 1):
         trainer.train(train_loader, epoch)
-        accuracy = trainer.eval(eval_loader, epoch)
+        if epoch % args.eval_interval == 0:
+            trainer.eval(eval_loader, epoch)
         trainer.update_epoch()
 
-    return accuracy
+    last_accuracy = trainer.eval(eval_loader, epoch)
+
+    return last_accuracy
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(add_help=True)
@@ -183,21 +189,19 @@ if __name__ == '__main__':
     parser.add_argument('--log_interval', type=int, default=1, help='log interval epochs')
     parser.add_argument('--loglevel', default='DEBUG')
     parser.add_argument('--epochs', type=int, default=40, help='epoch count')
-    parser.add_argument('--model_type', default=None, choices=['escconv', 'envnet', 'm5'], help='model type')
+    parser.add_argument('--model_type', default=None, choices=['escconv', 'envnet', 'm5', 'bc-learning'], help='model type')
     parser.add_argument('--segmented', action='store_true')
     parser.add_argument('--cross_validation', action='store_true')
     parser.add_argument('--use_adam', action='store_true')
     parser.add_argument('--use_augment', action='store_true')
-    parser.add_argument('--normalized', action='store_true')
     parser.add_argument('--augment_mel_width_max', type=int, default=22)
     parser.add_argument('--augment_time_width_max', type=int, default=30)
     parser.add_argument('--n_class', type=int, default=50)
     parser.add_argument('--batchnorm', action='store_true')
+    parser.add_argument('--lr_milestones', type=int, nargs='*', default=None)
+    parser.add_argument('--amplitude_threshold', type=float, default=0.2)
+    parser.add_argument('--eval_interval', type=int, default=1)
     args = parser.parse_args()
-
-    logger = setup_logger(name=__name__, level=args.loglevel)
-    logger.info(args)
-    args.logger = logger
 
     is_cpu = args.cpu or not torch.cuda.is_available()
     args.device_name = "cpu" if is_cpu else "cuda"
@@ -205,6 +209,11 @@ if __name__ == '__main__':
 
     args.tensorboard_log_dir = f'{args.dataroot}/runs/{args.name}'
     os.makedirs(args.tensorboard_log_dir, exist_ok=True)
+
+    logger = setup_logger(name=__name__, level=args.loglevel)
+    logger.info(args)
+    args.logger = logger
+
 
     if not args.cross_validation:
         train_folds = [1,2,3,4]
